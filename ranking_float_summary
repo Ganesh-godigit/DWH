@@ -1,0 +1,60 @@
+insert into dm_temp.rpt_cust_float_summary_dtls_dumb_3(unique_id,imd_code,account_manager,office_code,customer_account_code,
+customer_account_name,float_type,transaction_details,policy_count,invoice_no,receipt_no,master_policy_no,product_code,
+product_lob,trans_date,credit_amt,debit_amt,balance,payment_utr_no,ro)
+select md5(a.*::text)unique_id, imd_code, account_manager, office_code,customer_account_code,customer_account_name, 
+float_type, transaction_details, policy_count, invoice_no, receipt_no,master_policy_no, product_code, product_lob, 
+trans_date, credit_amt, debit_amt, cust_acc_balance balance,payment_utr_no,ro    
+from (
+select a.imd_code,a.account_manager,a.float_type,a.customer_account_code,a.office_code,
+(case when b.endorsement_ind = 'G08' then '' else a.invoice_no end) invoice_no,
+(case when collection_flag = 'K' then a.receipt_no else null end) receipt_no,
+a.trans_date,b.master_policy_no,b.product_code,b.product_lob,
+(case when b.endorsement_ind = 'G01' then 'Addition' 
+              when b.endorsement_ind = 'G08' then 'Deletion' 
+              when b.endorsement_ind not in ('G01','G08')then 'Misc. Addition/ Deletion / Endorsement etc.,'
+              else a.transaction_details end) transaction_details,
+count(distinct b.policy_number)policy_count, 
+sum(credit_amt)credit_amt, sum(debit_amt)debit_amt,
+sum(sum(a.credit_amt) - sum(a.debit_amt)) OVER (PARTITION BY a.imd_code, a.customer_account_code, a.float_type ORDER BY a.imd_code, a.customer_account_code, a.float_type, a.trans_date, 
+    (case when b.endorsement_ind = 'G01' then 'Addition' 
+              when b.endorsement_ind = 'G08' then 'Deletion' 
+              when b.endorsement_ind not in ('G01','G08') then 'Misc. Addition/ Deletion / Endorsement etc.,'
+              else a.transaction_details end)
+             ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS cust_acc_balance,
+
+--b.customer_account_id customer_account_code_pr,
+a.customer_account_name,
+a.payment_utr_no,
+row_number() OVER (PARTITION BY a.imd_code, a.customer_account_code, a.float_type ORDER BY a.imd_code, a.customer_account_code, a.float_type, a.trans_date, 
+    (case when b.endorsement_ind = 'G01' then 'Addition' 
+              when b.endorsement_ind = 'G08' then 'Deletion' 
+              when b.endorsement_ind not in ('G01','G08') then 'Misc. Addition/ Deletion / Endorsement etc.,'
+              else a.transaction_details end)) as ro 
+from 
+dm_work.wrk_mv_float_acc_mast j 
+--DM_WORK.temp_cust_account_id_float j
+join  dm_marts.v_cons_float_stmt a on j.customer_account_code = a.customer_account_code
+--dm_marts.v_cons_float_stmt a 
+left join  dm_marts.mv_premium_register b 
+ on a.policy_number= b.policy_number and a.trans_date=b.trans_date and (gross_premium::int = a.trans_amt::int or gross_premium-trans_amt between -2 and 2)
+  where 1=1 
+  and a.customer_account_code not in ('000413')
+ and j.float_type = 'CUSTOMER_FLOAT'
+ --and a.customer_account_code in ('000143','000155','000777','003878','008178','170577')
+group by a.imd_code,a.account_manager,a.float_type,a.customer_account_code,a.office_code,
+(case when b.endorsement_ind = 'G08' then '' else a.invoice_no end),
+(case when collection_flag = 'K' then a.receipt_no else null end),
+a.trans_date,b.master_policy_no,b.product_code,b.product_lob,
+(case when b.endorsement_ind = 'G01' then 'Addition' 
+              when b.endorsement_ind = 'G08' then 'Deletion' 
+              when b.endorsement_ind not in ('G01','G08') then 'Misc. Addition/ Deletion / Endorsement etc.,'
+              else a.transaction_details end),a.customer_account_name,a.payment_utr_no
+order by a.customer_account_code,a.trans_date, a.imd_code,a.account_manager,a.float_type,
+a.office_code,(case when b.endorsement_ind = 'G08' then '' else a.invoice_no end),
+(case when collection_flag = 'K' then a.receipt_no else null end),
+b.master_policy_no,b.product_code,
+(case when b.endorsement_ind = 'G01' then 'Addition' 
+              when b.endorsement_ind = 'G08' then 'Deletion' 
+              when b.endorsement_ind not in ('G01','G08') then 'Misc. Addition/ Deletion / Endorsement etc.,'
+              else a.transaction_details end)) a 
+order by imd_code, account_manager, office_code,customer_account_code,trans_date; 
